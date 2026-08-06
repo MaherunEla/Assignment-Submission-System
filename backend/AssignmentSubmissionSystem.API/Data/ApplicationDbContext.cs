@@ -27,8 +27,21 @@ public class ApplicationDbContext : DbContext {
     protected override void OnModelCreating(ModelBuilder modelBuilder){
         base.OnModelCreating(modelBuilder);
 
+        modelBuilder.Entity<Role>()
+       .HasIndex(r => r.Name)
+       .IsUnique();
+
+
         modelBuilder.Entity<User>()
         .HasIndex(u => u.Email)
+        .IsUnique();
+
+        modelBuilder.Entity<Subject>()
+        .HasIndex(s => new { s.AcademicClassId, s.Name })
+         .IsUnique();
+
+          modelBuilder.Entity<AcademicClass>()
+        .HasIndex(c => c.Name)
         .IsUnique();
 
         modelBuilder.Entity<User>()
@@ -49,6 +62,12 @@ public class ApplicationDbContext : DbContext {
         .HasForeignKey<Student>(s=>s.UserId)
         .OnDelete(DeleteBehavior.Cascade);
 
+        modelBuilder.Entity<Subject>()
+       .HasOne(s => s.AcademicClass)
+       .WithMany(c => c.Subjects)
+      .HasForeignKey(s => s.AcademicClassId)
+      .OnDelete(DeleteBehavior.Restrict);
+
         modelBuilder.Entity<Assignment>()
         .HasOne(a=>a.Teacher)
         .WithMany(t=>t.Assignments)
@@ -67,7 +86,6 @@ public class ApplicationDbContext : DbContext {
     .HasForeignKey(a => a.SubjectId)
     .OnDelete(DeleteBehavior.Restrict);
 
-
     modelBuilder.Entity<Submission>()
     .HasOne(s => s.Assignment)
     .WithMany(a => a.Submissions)
@@ -79,5 +97,24 @@ public class ApplicationDbContext : DbContext {
     .WithMany(st => st.Submissions)
     .HasForeignKey(s => s.StudentId)
     .OnDelete(DeleteBehavior.Cascade);
+
+
+    modelBuilder.Entity<Role>().HasData(
+        new Role{
+            Id = 1,
+            Name ="Admin",
+            Description = "System Administrator"
+        },
+        new Role{
+            Id = 2,
+            Name="Teacher",
+            Description="Teacher"
+        },
+        new Role{
+            Id=3,
+            Name="Student",
+            Description="Student"
+        }
+    );
     }
 }
