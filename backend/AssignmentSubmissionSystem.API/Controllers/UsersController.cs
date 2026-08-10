@@ -85,16 +85,24 @@ public async Task<ActionResult<UserResponseDto>> CreateUser(
         });
     }
 
-    var roleExists = await _context.Roles
-        .AnyAsync(r => r.Id == request.RoleId);
+    var role = await _context.Roles
+    .FirstOrDefaultAsync(r => r.Id == request.RoleId);
 
-    if (!roleExists)
+if (role == null)
+{
+    return BadRequest(new
     {
-        return BadRequest(new
-        {
-            message = "Invalid role."
-        });
-    }
+        message = "Invalid role."
+    });
+}
+
+if (role.Name == "Teacher" || role.Name == "Student")
+{
+    return BadRequest(new
+    {
+        message = $"Use the /api/{role.Name.ToLower()}s endpoint to create a {role.Name.ToLower()}."
+    });
+}
 
     var user = new User
     {
