@@ -9,4 +9,6 @@ public class Subject{
     public int AcademicClassId {get;set;}
     public AcademicClass AcademicClass{get;set;} = null!;
     public ICollection<Assignment> Assignments {get;set;} = new List<Assignment>();
+    public ICollection<TeacherAssignment> TeacherAssignments { get; set; }
+    = new List<TeacherAssignment>();
 }

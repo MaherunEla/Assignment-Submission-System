@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using AssignmentSubmissionSystem.API.Data;
 using AssignmentSubmissionSystem.API.DTOs.Assignments;
 using AssignmentSubmissionSystem.API.Models;
@@ -19,7 +20,10 @@ public class AssignmentsController : ControllerBase
         _context = context;
     }
 
-    // GET: api/assignments
+    // =========================================================
+    // GET ALL
+    // =========================================================
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<AssignmentResponseDto>>> GetAssignments()
     {
@@ -53,7 +57,10 @@ public class AssignmentsController : ControllerBase
         return Ok(assignments);
     }
 
-    // GET: api/assignments/1
+    // =========================================================
+    // GET BY ID
+    // =========================================================
+
     [HttpGet("{id:int}")]
     public async Task<ActionResult<AssignmentResponseDto>> GetAssignment(int id)
     {
@@ -96,17 +103,67 @@ public class AssignmentsController : ControllerBase
         return Ok(assignment);
     }
 
-    // POST: api/assignments
+    // =========================================================
+    // CREATE
+    // =========================================================
+
     [HttpPost]
     public async Task<ActionResult> CreateAssignment(
         CreateAssignmentDto request)
     {
-        // Check Teacher
-        var teacher = await _context.Teachers
-            .Include(t => t.User)
-            .FirstOrDefaultAsync(t => t.Id == request.TeacherId);
+        var isAdmin = User.IsInRole("Admin");
 
-        if (teacher == null)
+        int teacherId;
+
+        if (isAdmin)
+        {
+            // Admin can create an assignment for any teacher.
+            teacherId = request.TeacherId;
+        }
+        else
+        {
+            // TeacherId comes from JWT, NOT from request.
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (string.IsNullOrEmpty(userIdClaim))
+            {
+                return Unauthorized(new
+                {
+                    message = "User identity could not be determined."
+                });
+            }
+
+            if (!int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized(new
+                {
+                    message = "Invalid user identity."
+                });
+            }
+
+            var teacher = await _context.Teachers
+                .FirstOrDefaultAsync(t => t.UserId == userId);
+
+            if (teacher == null)
+            {
+              return StatusCode(StatusCodes.Status403Forbidden, new
+             {
+                  message = "Teacher profile not found."
+              });
+            }
+
+            teacherId = teacher.Id;
+        }
+
+        // =====================================================
+        // Check Teacher
+        // =====================================================
+
+        var teacherExists = await _context.Teachers
+            .Include(t => t.User)
+            .AnyAsync(t => t.Id == teacherId);
+
+        if (!teacherExists)
         {
             return BadRequest(new
             {
@@ -114,7 +171,10 @@ public class AssignmentsController : ControllerBase
             });
         }
 
+        // =====================================================
         // Check Academic Class
+        // =====================================================
+
         var academicClass = await _context.AcademicClasses
             .FirstOrDefaultAsync(c => c.Id == request.AcademicClassId);
 
@@ -126,7 +186,10 @@ public class AssignmentsController : ControllerBase
             });
         }
 
+        // =====================================================
         // Check Subject
+        // =====================================================
+
         var subject = await _context.Subjects
             .FirstOrDefaultAsync(s => s.Id == request.SubjectId);
 
@@ -138,7 +201,7 @@ public class AssignmentsController : ControllerBase
             });
         }
 
-        // Make sure subject belongs to selected class
+        // Subject must belong to selected class.
         if (subject.AcademicClassId != request.AcademicClassId)
         {
             return BadRequest(new
@@ -147,6 +210,29 @@ public class AssignmentsController : ControllerBase
             });
         }
 
+        // =====================================================
+        // Teacher must be assigned to this
+        // Teacher + Class + Subject combination.
+        // =====================================================
+
+        if (!isAdmin)
+        {
+            var teacherAssignmentExists =
+                await _context.TeacherAssignments.AnyAsync(ta =>
+                    ta.TeacherId == teacherId &&
+                    ta.AcademicClassId == request.AcademicClassId &&
+                    ta.SubjectId == request.SubjectId);
+
+            if (!teacherAssignmentExists)
+            {
+                return Forbid();
+            }
+        }
+
+        // =====================================================
+        // Create Assignment
+        // =====================================================
+
         var assignment = new Assignment
         {
             Title = request.Title,
@@ -154,7 +240,8 @@ public class AssignmentsController : ControllerBase
             Deadline = request.Deadline,
             MaximumMarks = request.MaximumMarks,
             IsPublished = request.IsPublished,
-            TeacherId = request.TeacherId,
+
+            TeacherId = teacherId,
             AcademicClassId = request.AcademicClassId,
             SubjectId = request.SubjectId
         };
@@ -163,35 +250,48 @@ public class AssignmentsController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        var response = new AssignmentResponseDto
-        {
-            Id = assignment.Id,
-            Title = assignment.Title,
-            Description = assignment.Description,
-            CreatedAt = assignment.CreatedAt,
-            UpdatedAt = assignment.UpdatedAt,
-            Deadline = assignment.Deadline,
-            MaximumMarks = assignment.MaximumMarks,
-            IsPublished = assignment.IsPublished,
+        // =====================================================
+        // Load response
+        // =====================================================
 
-            TeacherId = teacher.Id,
-            TeacherName = teacher.User.FullName,
+        var response = await _context.Assignments
+            .Include(a => a.Teacher)
+                .ThenInclude(t => t.User)
+            .Include(a => a.AcademicClass)
+            .Include(a => a.Subject)
+            .Where(a => a.Id == assignment.Id)
+            .Select(a => new AssignmentResponseDto
+            {
+                Id = a.Id,
+                Title = a.Title,
+                Description = a.Description,
+                CreatedAt = a.CreatedAt,
+                UpdatedAt = a.UpdatedAt,
+                Deadline = a.Deadline,
+                MaximumMarks = a.MaximumMarks,
+                IsPublished = a.IsPublished,
 
-            AcademicClassId = academicClass.Id,
-            AcademicClassName = academicClass.Name,
+                TeacherId = a.TeacherId,
+                TeacherName = a.Teacher.User.FullName,
 
-            SubjectId = subject.Id,
-            SubjectName = subject.Name
-        };
+                AcademicClassId = a.AcademicClassId,
+                AcademicClassName = a.AcademicClass.Name,
+
+                SubjectId = a.SubjectId,
+                SubjectName = a.Subject.Name
+            })
+            .FirstAsync();
 
         return CreatedAtAction(
             nameof(GetAssignment),
             new { id = assignment.Id },
-            response
-        );
+            response);
     }
 
-    // PUT: api/assignments/1
+    // =========================================================
+    // UPDATE
+    // =========================================================
+
     [HttpPut("{id:int}")]
     public async Task<ActionResult> UpdateAssignment(
         int id,
@@ -208,12 +308,55 @@ public class AssignmentsController : ControllerBase
             });
         }
 
-        // Check Teacher
-        var teacher = await _context.Teachers
-            .Include(t => t.User)
-            .FirstOrDefaultAsync(t => t.Id == request.TeacherId);
+        var isAdmin = User.IsInRole("Admin");
 
-        if (teacher == null)
+        int teacherId;
+
+        if (isAdmin)
+        {
+            teacherId = request.TeacherId;
+        }
+        else
+        {
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (string.IsNullOrEmpty(userIdClaim) ||
+                !int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized(new
+                {
+                    message = "Invalid user identity."
+                });
+            }
+
+            var teacher = await _context.Teachers
+                .FirstOrDefaultAsync(t => t.UserId == userId);
+
+            if (teacher == null)
+            {
+               return StatusCode(StatusCodes.Status403Forbidden, new
+                 {
+                    message = "Teacher profile not found."
+                 });
+            }
+
+            teacherId = teacher.Id;
+
+            // Teacher can only update their own assignment.
+            if (assignment.TeacherId != teacherId)
+            {
+                return Forbid();
+            }
+        }
+
+        // =====================================================
+        // Check Teacher
+        // =====================================================
+
+        var teacherExists = await _context.Teachers
+            .AnyAsync(t => t.Id == teacherId);
+
+        if (!teacherExists)
         {
             return BadRequest(new
             {
@@ -221,7 +364,10 @@ public class AssignmentsController : ControllerBase
             });
         }
 
+        // =====================================================
         // Check Academic Class
+        // =====================================================
+
         var academicClass = await _context.AcademicClasses
             .FirstOrDefaultAsync(c => c.Id == request.AcademicClassId);
 
@@ -233,7 +379,10 @@ public class AssignmentsController : ControllerBase
             });
         }
 
+        // =====================================================
         // Check Subject
+        // =====================================================
+
         var subject = await _context.Subjects
             .FirstOrDefaultAsync(s => s.Id == request.SubjectId);
 
@@ -245,7 +394,6 @@ public class AssignmentsController : ControllerBase
             });
         }
 
-        // Make sure subject belongs to selected class
         if (subject.AcademicClassId != request.AcademicClassId)
         {
             return BadRequest(new
@@ -254,41 +402,81 @@ public class AssignmentsController : ControllerBase
             });
         }
 
+        // =====================================================
+        // Check TeacherAssignment
+        // =====================================================
+
+        if (!isAdmin)
+        {
+            var teacherAssignmentExists =
+                await _context.TeacherAssignments.AnyAsync(ta =>
+                    ta.TeacherId == teacherId &&
+                    ta.AcademicClassId == request.AcademicClassId &&
+                    ta.SubjectId == request.SubjectId);
+
+            if (!teacherAssignmentExists)
+            {
+                return Forbid();
+            }
+        }
+
+        // =====================================================
+        // Update
+        // =====================================================
+
         assignment.Title = request.Title;
         assignment.Description = request.Description;
         assignment.Deadline = request.Deadline;
         assignment.MaximumMarks = request.MaximumMarks;
         assignment.IsPublished = request.IsPublished;
-        assignment.TeacherId = request.TeacherId;
+
+        assignment.TeacherId = teacherId;
         assignment.AcademicClassId = request.AcademicClassId;
         assignment.SubjectId = request.SubjectId;
+
         assignment.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
 
-        return Ok(new AssignmentResponseDto
-        {
-            Id = assignment.Id,
-            Title = assignment.Title,
-            Description = assignment.Description,
-            CreatedAt = assignment.CreatedAt,
-            UpdatedAt = assignment.UpdatedAt,
-            Deadline = assignment.Deadline,
-            MaximumMarks = assignment.MaximumMarks,
-            IsPublished = assignment.IsPublished,
+        // =====================================================
+        // Response
+        // =====================================================
 
-            TeacherId = teacher.Id,
-            TeacherName = teacher.User.FullName,
+        var response = await _context.Assignments
+            .Include(a => a.Teacher)
+                .ThenInclude(t => t.User)
+            .Include(a => a.AcademicClass)
+            .Include(a => a.Subject)
+            .Where(a => a.Id == assignment.Id)
+            .Select(a => new AssignmentResponseDto
+            {
+                Id = a.Id,
+                Title = a.Title,
+                Description = a.Description,
+                CreatedAt = a.CreatedAt,
+                UpdatedAt = a.UpdatedAt,
+                Deadline = a.Deadline,
+                MaximumMarks = a.MaximumMarks,
+                IsPublished = a.IsPublished,
 
-            AcademicClassId = academicClass.Id,
-            AcademicClassName = academicClass.Name,
+                TeacherId = a.TeacherId,
+                TeacherName = a.Teacher.User.FullName,
 
-            SubjectId = subject.Id,
-            SubjectName = subject.Name
-        });
+                AcademicClassId = a.AcademicClassId,
+                AcademicClassName = a.AcademicClass.Name,
+
+                SubjectId = a.SubjectId,
+                SubjectName = a.Subject.Name
+            })
+            .FirstAsync();
+
+        return Ok(response);
     }
 
-    // DELETE: api/assignments/1
+    // =========================================================
+    // DELETE
+    // =========================================================
+
     [HttpDelete("{id:int}")]
     public async Task<ActionResult> DeleteAssignment(int id)
     {
@@ -301,6 +489,36 @@ public class AssignmentsController : ControllerBase
             {
                 message = "Assignment not found."
             });
+        }
+
+        var isAdmin = User.IsInRole("Admin");
+
+        if (!isAdmin)
+        {
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (string.IsNullOrEmpty(userIdClaim) ||
+                !int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized(new
+                {
+                    message = "Invalid user identity."
+                });
+            }
+
+            var teacher = await _context.Teachers
+                .FirstOrDefaultAsync(t => t.UserId == userId);
+
+            if (teacher == null)
+            {
+                return Forbid();
+            }
+
+            // Teacher can delete only their own assignment.
+            if (assignment.TeacherId != teacher.Id)
+            {
+                return Forbid();
+            }
         }
 
         _context.Assignments.Remove(assignment);

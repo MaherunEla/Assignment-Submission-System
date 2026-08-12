@@ -24,6 +24,8 @@ public class ApplicationDbContext : DbContext {
 
     public DbSet<Submission> Submissions {get;set;}
 
+    public DbSet<TeacherAssignment> TeacherAssignments { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder){
         base.OnModelCreating(modelBuilder);
 
@@ -62,6 +64,12 @@ public class ApplicationDbContext : DbContext {
         .HasForeignKey<Student>(s=>s.UserId)
         .OnDelete(DeleteBehavior.Cascade);
 
+        modelBuilder.Entity<Student>()
+       .HasOne(s => s.AcademicClass)
+       .WithMany(c => c.Students)
+       .HasForeignKey(s => s.AcademicClassId)
+       .OnDelete(DeleteBehavior.Restrict);
+
         modelBuilder.Entity<Subject>()
        .HasOne(s => s.AcademicClass)
        .WithMany(c => c.Subjects)
@@ -97,6 +105,33 @@ public class ApplicationDbContext : DbContext {
     .WithMany(st => st.Submissions)
     .HasForeignKey(s => s.StudentId)
     .OnDelete(DeleteBehavior.Cascade);
+
+    modelBuilder.Entity<TeacherAssignment>()
+    .HasOne(ta => ta.Teacher)
+    .WithMany(t => t.TeacherAssignments)
+    .HasForeignKey(ta => ta.TeacherId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+     modelBuilder.Entity<TeacherAssignment>()
+    .HasOne(ta => ta.AcademicClass)
+    .WithMany(c => c.TeacherAssignments)
+    .HasForeignKey(ta => ta.AcademicClassId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+     modelBuilder.Entity<TeacherAssignment>()
+    .HasOne(ta => ta.Subject)
+    .WithMany(s => s.TeacherAssignments)
+    .HasForeignKey(ta => ta.SubjectId)
+    .OnDelete(DeleteBehavior.Restrict);
+
+    modelBuilder.Entity<TeacherAssignment>()
+    .HasIndex(ta => new
+    {
+        ta.TeacherId,
+        ta.AcademicClassId,
+        ta.SubjectId
+    })
+    .IsUnique();
 
 
     modelBuilder.Entity<Role>().HasData(
