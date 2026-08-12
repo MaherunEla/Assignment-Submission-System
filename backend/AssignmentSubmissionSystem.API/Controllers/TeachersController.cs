@@ -98,9 +98,12 @@ public async Task<ActionResult> CreateTeacher(CreateTeacherDto request)
     {
         FullName = request.FullName,
         Email = request.Email,
-        PasswordHash = _passwordHasher.HashPassword(request.Password),
         RoleId = teacherRole.Id
     };
+
+    user.PasswordHash = _passwordHasher.HashPassword(
+    user,
+    request.Password);
 
     _context.Users.Add(user);
 

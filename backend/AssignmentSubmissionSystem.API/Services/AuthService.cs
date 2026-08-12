@@ -34,6 +34,7 @@ public class AuthService : IAuthService
         }
 
         var passwordValid = _passwordHasher.VerifyPassword(
+            user,
             request.Password,
             user.PasswordHash
         );
@@ -57,5 +58,39 @@ public class AuthService : IAuthService
             Email = user.Email,
             Role = user.Role.Name
         };
+    }
+
+     public async Task<bool> ChangePasswordAsync(
+        int userId,
+        ChangePasswordDto request)
+    {
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.Id == userId);
+
+        if (user == null)
+        {
+            return false;
+        }
+
+        var currentPasswordValid =
+            _passwordHasher.VerifyPassword(
+                user,
+                request.CurrentPassword,
+                user.PasswordHash
+            );
+
+        if (!currentPasswordValid)
+        {
+            return false;
+        }
+
+        user.PasswordHash = _passwordHasher.HashPassword(
+            user,
+            request.NewPassword
+        );
+
+        await _context.SaveChangesAsync();
+
+        return true;
     }
 }

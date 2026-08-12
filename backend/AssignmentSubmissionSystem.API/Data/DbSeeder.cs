@@ -35,8 +35,10 @@ public static class DbSeeder
             FullName = "System Administrator",
             Email = "admin@assignment.com",
             RoleId = adminRole.Id,
-            PasswordHash = passwordHasher.HashPassword("Admin@123")
+           
         };
+
+        admin.PasswordHash = passwordHasher.HashPassword( admin, "Admin@123");
 
         context.Users.Add(admin);
 

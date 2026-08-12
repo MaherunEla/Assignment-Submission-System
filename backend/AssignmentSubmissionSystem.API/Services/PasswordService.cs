@@ -1,21 +1,32 @@
 using AssignmentSubmissionSystem.API.Interfaces;
+using AssignmentSubmissionSystem.API.Models;
 using Microsoft.AspNetCore.Identity;
 
 namespace AssignmentSubmissionSystem.API.Services;
 
 public class PasswordService : IPasswordHasher
 {
-    private readonly PasswordHasher<object> _passwordHasher = new();
+    private readonly Microsoft.AspNetCore.Identity.IPasswordHasher<User>
+        _passwordHasher;
 
-    public string HashPassword(string password)
+    public PasswordService(
+        Microsoft.AspNetCore.Identity.IPasswordHasher<User> passwordHasher)
     {
-        return _passwordHasher.HashPassword(null!, password);
+        _passwordHasher = passwordHasher;
     }
 
-    public bool VerifyPassword(string password, string passwordHash)
+    public string HashPassword(User user, string password)
+    {
+        return _passwordHasher.HashPassword(user, password);
+    }
+
+    public bool VerifyPassword(
+        User user,
+        string password,
+        string passwordHash)
     {
         var result = _passwordHasher.VerifyHashedPassword(
-            null!,
+            user,
             passwordHash,
             password
         );

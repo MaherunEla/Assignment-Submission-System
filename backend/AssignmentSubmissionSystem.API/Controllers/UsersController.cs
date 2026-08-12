@@ -108,9 +108,12 @@ if (role.Name == "Teacher" || role.Name == "Student")
     {
         FullName = request.FullName,
         Email = request.Email,
-        PasswordHash = _passwordHasher.HashPassword(request.Password),
         RoleId = request.RoleId
     };
+
+    user.PasswordHash = _passwordHasher.HashPassword(
+    user,
+    request.Password);
 
     _context.Users.Add(user);
 

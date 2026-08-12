@@ -1,5 +1,7 @@
+using System.Security.Claims;
 using AssignmentSubmissionSystem.API.DTOs.Auth;
 using AssignmentSubmissionSystem.API.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AssignmentSubmissionSystem.API.Controllers;
@@ -29,6 +31,43 @@ public class AuthController : ControllerBase
         }
 
         return Ok(result);
+    }
+
+   [Authorize]
+    [HttpPost("change-password")]
+    public async Task<ActionResult> ChangePassword(
+        ChangePasswordDto request)
+    {
+        var userIdClaim = User.FindFirstValue(
+            ClaimTypes.NameIdentifier
+        );
+
+        if (string.IsNullOrEmpty(userIdClaim) ||
+            !int.TryParse(userIdClaim, out int userId))
+        {
+            return Unauthorized(new
+            {
+                message = "Invalid user identity."
+            });
+        }
+
+        var result = await _authService.ChangePasswordAsync(
+            userId,
+            request
+        );
+
+        if (!result)
+        {
+            return BadRequest(new
+            {
+                message = "Current password is incorrect."
+            });
+        }
+
+        return Ok(new
+        {
+            message = "Password changed successfully."
+        });
     }
 
     

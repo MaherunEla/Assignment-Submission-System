@@ -1,10 +1,12 @@
 using System.Text;
 using AssignmentSubmissionSystem.API.Data;
+using AssignmentSubmissionSystem.API.Models;
 using AssignmentSubmissionSystem.API.Interfaces;
 using AssignmentSubmissionSystem.API.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,6 +21,10 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 builder.Services.AddControllers();
 
 // Password hashing
+builder.Services.AddScoped<
+    Microsoft.AspNetCore.Identity.IPasswordHasher<User>,
+    Microsoft.AspNetCore.Identity.PasswordHasher<User>>();
+
 builder.Services.AddScoped<IPasswordHasher, PasswordService>();
 
 // Authentication services

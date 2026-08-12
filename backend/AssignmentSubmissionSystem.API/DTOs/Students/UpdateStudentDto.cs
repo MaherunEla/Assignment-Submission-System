@@ -11,4 +11,7 @@ public class UpdateStudentDto
     [Required]
     [EmailAddress]
     public string Email { get; set; } = string.Empty;
+
+    [Required]
+    public int AcademicClassId { get; set; }
 }
