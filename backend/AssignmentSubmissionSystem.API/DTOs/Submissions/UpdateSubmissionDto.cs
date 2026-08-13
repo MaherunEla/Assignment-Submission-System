@@ -1,9 +1,10 @@
-using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Http;
 
 namespace AssignmentSubmissionSystem.API.DTOs.Submissions;
 
 public class UpdateSubmissionDto
 {
-    [Required]
-    public string Answer { get; set; } = string.Empty;
+    public string? Answer { get; set; }
+
+    public IFormFile? File { get; set; }
 }

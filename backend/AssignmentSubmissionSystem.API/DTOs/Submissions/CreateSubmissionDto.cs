@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using System.ComponentModel.DataAnnotations;
 
 namespace AssignmentSubmissionSystem.API.DTOs.Submissions;
@@ -5,8 +6,9 @@ namespace AssignmentSubmissionSystem.API.DTOs.Submissions;
 public class CreateSubmissionDto
 {
     [Required]
-    public string Answer { get; set; } = string.Empty;
-
-    [Required]
     public int AssignmentId { get; set; }
+
+    public string? Answer { get; set; }
+
+    public IFormFile? File { get; set; }
 }

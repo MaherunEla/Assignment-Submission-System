@@ -15,183 +15,35 @@ namespace AssignmentSubmissionSystem.API.Controllers;
 public class SubmissionsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
+    private readonly IWebHostEnvironment _environment;
+    private readonly IConfiguration _configuration;
 
-    public SubmissionsController(ApplicationDbContext context)
+    public SubmissionsController(
+        ApplicationDbContext context,
+        IWebHostEnvironment environment,
+        IConfiguration configuration)
     {
         _context = context;
+        _environment = environment;
+        _configuration = configuration;
     }
 
     // =========================================================
-    // GET: api/submissions
-    // =========================================================
-    // Admin   -> gets all submissions
-    // Teacher -> gets submissions for their assignments
-    // Student -> gets their own submissions
-    [HttpGet]
-    public async Task<ActionResult<IEnumerable<SubmissionResponseDto>>> GetSubmissions()
-    {
-        var userId = GetCurrentUserId();
-
-        if (userId == null)
-        {
-            return Unauthorized(new
-            {
-                message = "Invalid user identity."
-            });
-        }
-
-        var query = _context.Submissions
-            .Include(s => s.Student)
-                .ThenInclude(st => st.User)
-            .Include(s => s.Assignment)
-                .ThenInclude(a => a.Teacher)
-                    .ThenInclude(t => t.User)
-            .AsQueryable();
-
-        if (User.IsInRole("Student"))
-        {
-            var student = await _context.Students
-                .FirstOrDefaultAsync(s => s.UserId == userId.Value);
-
-            if (student == null)
-            {
-                return NotFound(new
-                {
-                    message = "Student profile not found."
-                });
-            }
-
-            query = query.Where(s => s.StudentId == student.Id);
-        }
-        else if (User.IsInRole("Teacher"))
-        {
-            var teacher = await _context.Teachers
-                .FirstOrDefaultAsync(t => t.UserId == userId.Value);
-
-            if (teacher == null)
-            {
-                return NotFound(new
-                {
-                    message = "Teacher profile not found."
-                });
-            }
-
-            query = query.Where(s =>
-                s.Assignment.TeacherId == teacher.Id);
-        }
-        else if (!User.IsInRole("Admin"))
-        {
-            return Forbid();
-        }
-
-        var submissions = await query
-            .Select(s => new SubmissionResponseDto
-            {
-                Id = s.Id,
-                Answer = s.Answer,
-                SubmittedAt = s.SubmittedAt,
-                Marks = s.Marks,
-                Feedback = s.Feedback,
-                Status = s.Status,
-
-                AssignmentId = s.AssignmentId,
-                AssignmentTitle = s.Assignment.Title,
-
-                StudentId = s.StudentId,
-                StudentName = s.Student.User.FullName
-            })
-            .ToListAsync();
-
-        return Ok(submissions);
-    }
-
-    // =========================================================
-    // GET: api/submissions/{id}
-    // =========================================================
-    [HttpGet("{id:int}")]
-    public async Task<ActionResult<SubmissionResponseDto>> GetSubmission(int id)
-    {
-        var userId = GetCurrentUserId();
-
-        if (userId == null)
-        {
-            return Unauthorized(new
-            {
-                message = "Invalid user identity."
-            });
-        }
-
-        var submission = await _context.Submissions
-            .Include(s => s.Student)
-                .ThenInclude(st => st.User)
-            .Include(s => s.Assignment)
-                .ThenInclude(a => a.Teacher)
-                    .ThenInclude(t => t.User)
-            .FirstOrDefaultAsync(s => s.Id == id);
-
-        if (submission == null)
-        {
-            return NotFound(new
-            {
-                message = "Submission not found."
-            });
-        }
-
-        // Student can only see their own submission
-        if (User.IsInRole("Student"))
-        {
-            var student = await _context.Students
-                .FirstOrDefaultAsync(s => s.UserId == userId.Value);
-
-            if (student == null)
-            {
-                return NotFound(new
-                {
-                    message = "Student profile not found."
-                });
-            }
-
-            if (submission.StudentId != student.Id)
-            {
-                return Forbid();
-            }
-        }
-
-        // Teacher can only see submissions for their assignments
-        if (User.IsInRole("Teacher"))
-        {
-            var teacher = await _context.Teachers
-                .FirstOrDefaultAsync(t => t.UserId == userId.Value);
-
-            if (teacher == null)
-            {
-                return NotFound(new
-                {
-                    message = "Teacher profile not found."
-                });
-            }
-
-            if (submission.Assignment.TeacherId != teacher.Id)
-            {
-                return Forbid();
-            }
-        }
-
-        return Ok(MapToResponse(submission));
-    }
-
-    // =========================================================
+    // CREATE SUBMISSION
     // POST: api/submissions
+    // Student only
     // =========================================================
-    // Only Student can create a submission.
+
     [HttpPost]
     [Authorize(Roles = "Student")]
-    public async Task<ActionResult> CreateSubmission(
-        CreateSubmissionDto request)
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<SubmissionResponseDto>> CreateSubmission(
+        [FromForm] CreateSubmissionDto request)
     {
-        var userId = GetCurrentUserId();
+        var userIdClaim = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
 
-        if (userId == null)
+        if (!int.TryParse(userIdClaim, out int userId))
         {
             return Unauthorized(new
             {
@@ -199,10 +51,8 @@ public class SubmissionsController : ControllerBase
             });
         }
 
-        // Find logged-in student's profile
         var student = await _context.Students
-            .Include(s => s.User)
-            .FirstOrDefaultAsync(s => s.UserId == userId.Value);
+            .FirstOrDefaultAsync(s => s.UserId == userId);
 
         if (student == null)
         {
@@ -214,22 +64,14 @@ public class SubmissionsController : ControllerBase
 
         // Find assignment
         var assignment = await _context.Assignments
+            .Include(a => a.Subject)
             .FirstOrDefaultAsync(a => a.Id == request.AssignmentId);
 
         if (assignment == null)
         {
-            return BadRequest(new
+            return NotFound(new
             {
                 message = "Assignment not found."
-            });
-        }
-
-        // Don't allow submission after deadline
-        if (DateTime.UtcNow > assignment.Deadline)
-        {
-            return BadRequest(new
-            {
-                message = "The submission deadline has passed."
             });
         }
 
@@ -242,7 +84,22 @@ public class SubmissionsController : ControllerBase
             });
         }
 
-        // Check if student already submitted
+        // Student must belong to assignment's class
+        if (student.AcademicClassId != assignment.AcademicClassId)
+        {
+            return Forbid();
+        }
+
+        // Check deadline
+        if (DateTime.UtcNow > assignment.Deadline)
+        {
+            return BadRequest(new
+            {
+                message = "The assignment deadline has passed."
+            });
+        }
+
+        // Prevent duplicate submission
         var existingSubmission = await _context.Submissions
             .FirstOrDefaultAsync(s =>
                 s.AssignmentId == request.AssignmentId &&
@@ -256,56 +113,191 @@ public class SubmissionsController : ControllerBase
             });
         }
 
+        // At least answer or file must exist
+        if (string.IsNullOrWhiteSpace(request.Answer) &&
+            request.File == null)
+        {
+            return BadRequest(new
+            {
+                message = "Please provide an answer or upload a file."
+            });
+        }
+
+        string? fileName = null;
+        string? filePath = null;
+        string? fileContentType = null;
+        long? fileSize = null;
+
+        // Handle file
+        if (request.File != null)
+        {
+            var validationResult = ValidateFile(request.File);
+
+            if (validationResult != null)
+            {
+                return BadRequest(new
+                {
+                    message = validationResult
+                });
+            }
+
+            var uploadFolder = Path.Combine(
+                _environment.WebRootPath,
+                "uploads",
+                "submissions");
+
+            Directory.CreateDirectory(uploadFolder);
+
+            var extension = Path.GetExtension(
+                request.File.FileName);
+
+            var storedFileName =
+                $"{Guid.NewGuid()}{extension}";
+
+            var physicalPath = Path.Combine(
+                uploadFolder,
+                storedFileName);
+
+            await using var stream =
+                new FileStream(
+                    physicalPath,
+                    FileMode.Create);
+
+            await request.File.CopyToAsync(stream);
+
+            fileName = Path.GetFileName(request.File.FileName);
+            filePath = $"/uploads/submissions/{storedFileName}";
+            fileContentType = request.File.ContentType;
+            fileSize = request.File.Length;
+        }
+
         var submission = new Submission
         {
-            Answer = request.Answer,
+            AssignmentId = assignment.Id,
+            StudentId = student.Id,
+            Answer = request.Answer ?? string.Empty,
             SubmittedAt = DateTime.UtcNow,
-            Marks = null,
-            Feedback = null,
             Status = SubmissionStatus.Submitted,
-            AssignmentId = request.AssignmentId,
-            StudentId = student.Id
+
+            FileName = fileName,
+            FilePath = filePath,
+            FileContentType = fileContentType,
+            FileSize = fileSize
         };
 
         _context.Submissions.Add(submission);
 
         await _context.SaveChangesAsync();
 
-        await _context.Entry(submission)
-            .Reference(s => s.Assignment)
-            .LoadAsync();
-
-        await _context.Entry(submission)
-            .Reference(s => s.Student)
-            .LoadAsync();
+        var response = new SubmissionResponseDto
+        {
+            Id = submission.Id,
+            AssignmentId = assignment.Id,
+            AssignmentTitle = assignment.Title,
+            StudentId = student.Id,
+            Answer = submission.Answer,
+            SubmittedAt = submission.SubmittedAt,
+            Marks = submission.Marks,
+            Feedback = submission.Feedback,
+            Status = submission.Status,
+            FileName = submission.FileName,
+            FileUrl = submission.FilePath,
+            FileContentType = submission.FileContentType,
+            FileSize = submission.FileSize
+        };
 
         return CreatedAtAction(
             nameof(GetSubmission),
             new { id = submission.Id },
-            MapToResponse(submission)
-        );
+            response);
     }
 
     // =========================================================
-    // PUT: api/submissions/{id}
-    // =========================================================
-    // Student can update their own answer before deadline.
-    [HttpPut("{id:int}")]
-    [Authorize(Roles = "Student")]
-    public async Task<ActionResult> UpdateSubmission(
-        int id,
-        UpdateSubmissionDto request)
-    {
-        var userId = GetCurrentUserId();
+// GET ALL SUBMISSIONS
+// Admin only
+// =========================================================
 
-        if (userId == null)
+[HttpGet]
+[Authorize(Roles = "Admin")]
+public async Task<ActionResult<IEnumerable<SubmissionResponseDto>>>
+    GetSubmissions()
+{
+    var submissions = await _context.Submissions
+        .Include(s => s.Assignment)
+        .Include(s => s.Student)
+            .ThenInclude(s => s.User)
+        .OrderByDescending(s => s.SubmittedAt)
+        .ToListAsync();
+
+    return Ok(
+        submissions.Select(MapToResponse)
+    );
+}
+
+    // =========================================================
+    // GET SINGLE SUBMISSION
+    // =========================================================
+
+   [HttpGet("{id:int}")]
+[Authorize(Roles = "Admin,Teacher,Student")]
+public async Task<ActionResult<SubmissionResponseDto>> GetSubmission(int id)
+{
+    var submission = await _context.Submissions
+        .Include(s => s.Assignment)
+        .Include(s => s.Student)
+            .ThenInclude(s => s.User)
+        .FirstOrDefaultAsync(s => s.Id == id);
+
+    if (submission == null)
+    {
+        return NotFound(new
         {
-            return Unauthorized(new
+            message = "Submission not found."
+        });
+    }
+
+    var userId = GetCurrentUserId();
+
+    if (userId == null)
+    {
+        return Unauthorized(new
+        {
+            message = "Invalid user identity."
+        });
+    }
+
+    // Admin can view everything
+    if (User.IsInRole("Admin"))
+    {
+        return Ok(MapToResponse(submission));
+    }
+
+    // Teacher can only view submissions
+    // belonging to their own assignments
+    if (User.IsInRole("Teacher"))
+    {
+        var teacher = await _context.Teachers
+            .FirstOrDefaultAsync(t => t.UserId == userId.Value);
+
+        if (teacher == null)
+        {
+            return NotFound(new
             {
-                message = "Invalid user identity."
+                message = "Teacher profile not found."
             });
         }
 
+        if (submission.Assignment.TeacherId != teacher.Id)
+        {
+            return Forbid();
+        }
+
+        return Ok(MapToResponse(submission));
+    }
+
+    // Student can only view their own submission
+    if (User.IsInRole("Student"))
+    {
         var student = await _context.Students
             .FirstOrDefaultAsync(s => s.UserId == userId.Value);
 
@@ -317,10 +309,81 @@ public class SubmissionsController : ControllerBase
             });
         }
 
+        if (submission.StudentId != student.Id)
+        {
+            return Forbid();
+        }
+
+        return Ok(MapToResponse(submission));
+    }
+
+    return Forbid();
+}
+
+    // =========================================================
+    // GET MY SUBMISSIONS
+    // =========================================================
+
+    [HttpGet("me")]
+    [Authorize(Roles = "Student")]
+    public async Task<ActionResult<IEnumerable<SubmissionResponseDto>>>
+        GetMySubmissions()
+    {
+        var userIdClaim = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
+
+        if (!int.TryParse(userIdClaim, out int userId))
+        {
+            return Unauthorized();
+        }
+
+        var student = await _context.Students
+            .FirstOrDefaultAsync(s => s.UserId == userId);
+
+        if (student == null)
+        {
+            return NotFound(new
+            {
+                message = "Student profile not found."
+            });
+        }
+
+        var submissions = await _context.Submissions
+            .Include(s => s.Assignment)
+            .Include(s => s.Student)
+                .ThenInclude(s => s.User)
+            .Where(s => s.StudentId == student.Id)
+            .OrderByDescending(s => s.SubmittedAt)
+            .ToListAsync();
+
+        return Ok(
+            submissions.Select(MapToResponse));
+    }
+
+    // =========================================================
+    // UPDATE SUBMISSION
+    // Student can update before deadline
+    // =========================================================
+
+    [HttpPut("{id:int}")]
+    [Authorize(Roles = "Student")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<SubmissionResponseDto>>
+        UpdateSubmission(
+            int id,
+            [FromForm] UpdateSubmissionDto request)
+    {
+        var userIdClaim = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
+
+        if (!int.TryParse(userIdClaim, out int userId))
+        {
+            return Unauthorized();
+        }
+
         var submission = await _context.Submissions
             .Include(s => s.Assignment)
             .Include(s => s.Student)
-                .ThenInclude(st => st.User)
             .FirstOrDefaultAsync(s => s.Id == id);
 
         if (submission == null)
@@ -331,33 +394,76 @@ public class SubmissionsController : ControllerBase
             });
         }
 
-        // Student can only update their own submission
-        if (submission.StudentId != student.Id)
+        if (submission.Student.UserId != userId)
         {
             return Forbid();
         }
 
-        // Don't allow editing after deadline
         if (DateTime.UtcNow > submission.Assignment.Deadline)
         {
             return BadRequest(new
             {
-                message = "The submission deadline has passed."
+                message = "The assignment deadline has passed."
             });
         }
 
-        // Don't allow editing after grading
-        if (submission.Marks != null)
+        if (!string.IsNullOrWhiteSpace(request.Answer))
         {
-            return BadRequest(new
-            {
-                message = "A graded submission cannot be edited."
-            });
+            submission.Answer = request.Answer;
         }
 
-        submission.Answer = request.Answer;
-        submission.SubmittedAt = DateTime.UtcNow;
-        submission.Status = SubmissionStatus.UnderReview;
+        // Replace file
+        if (request.File != null)
+        {
+            var validationResult = ValidateFile(request.File);
+
+            if (validationResult != null)
+            {
+                return BadRequest(new
+                {
+                    message = validationResult
+                });
+            }
+
+            // Delete old file
+            DeletePhysicalFile(submission.FilePath);
+
+            var uploadFolder = Path.Combine(
+                _environment.WebRootPath,
+                "uploads",
+                "submissions");
+
+            Directory.CreateDirectory(uploadFolder);
+
+            var extension = Path.GetExtension(
+                request.File.FileName);
+
+            var storedFileName =
+                $"{Guid.NewGuid()}{extension}";
+
+            var physicalPath = Path.Combine(
+                uploadFolder,
+                storedFileName);
+
+            await using var stream =
+                new FileStream(
+                    physicalPath,
+                    FileMode.Create);
+
+            await request.File.CopyToAsync(stream);
+
+            submission.FileName =
+                Path.GetFileName(request.File.FileName);
+
+            submission.FilePath =
+                $"/uploads/submissions/{storedFileName}";
+
+            submission.FileContentType =
+                request.File.ContentType;
+
+            submission.FileSize =
+                request.File.Length;
+        }
 
         await _context.SaveChangesAsync();
 
@@ -365,14 +471,90 @@ public class SubmissionsController : ControllerBase
     }
 
     // =========================================================
-    // PUT: api/submissions/{id}/grade
+    // DELETE SUBMISSION
+    // Student before deadline / Admin
     // =========================================================
-    // Only Teacher can grade their own assignment submissions.
-    [HttpPut("{id:int}/grade")]
-    [Authorize(Roles = "Teacher")]
-    public async Task<ActionResult> GradeSubmission(
-        int id,
-        GradeSubmissionRequest request)
+
+    [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin,Student")]
+    public async Task<ActionResult> DeleteSubmission(int id)
+    {
+        var submission = await _context.Submissions
+            .Include(s => s.Assignment)
+            .Include(s => s.Student)
+            .FirstOrDefaultAsync(s => s.Id == id);
+
+        if (submission == null)
+        {
+            return NotFound(new
+            {
+                message = "Submission not found."
+            });
+        }
+
+        var userIdClaim = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
+
+        var isAdmin = User.IsInRole("Admin");
+
+        if (!isAdmin)
+        {
+            if (!int.TryParse(userIdClaim, out int userId) ||
+                submission.Student.UserId != userId)
+            {
+                return Forbid();
+            }
+
+            if (DateTime.UtcNow > submission.Assignment.Deadline)
+            {
+                return BadRequest(new
+                {
+                    message = "You cannot delete a submission after the deadline."
+                });
+            }
+        }
+
+        DeletePhysicalFile(submission.FilePath);
+
+        _context.Submissions.Remove(submission);
+
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+   
+
+   // =========================================================
+// GET SUBMISSIONS FOR AN ASSIGNMENT
+// Admin + Teacher
+// =========================================================
+
+[HttpGet("assignment/{assignmentId:int}")]
+[Authorize(Roles = "Admin,Teacher")]
+public async Task<ActionResult<IEnumerable<SubmissionResponseDto>>>
+    GetAssignmentSubmissions(int assignmentId)
+{
+    var assignment = await _context.Assignments
+        .FirstOrDefaultAsync(a => a.Id == assignmentId);
+
+    if (assignment == null)
+    {
+        return NotFound(new
+        {
+            message = "Assignment not found."
+        });
+    }
+
+    var query = _context.Submissions
+        .Include(s => s.Assignment)
+        .Include(s => s.Student)
+            .ThenInclude(st => st.User)
+        .Where(s => s.AssignmentId == assignmentId);
+
+    // Teacher can only see submissions
+    // for their own assignment
+    if (User.IsInRole("Teacher"))
     {
         var userId = GetCurrentUserId();
 
@@ -395,113 +577,192 @@ public class SubmissionsController : ControllerBase
             });
         }
 
-        var submission = await _context.Submissions
-            .Include(s => s.Assignment)
-            .Include(s => s.Student)
-                .ThenInclude(st => st.User)
-            .FirstOrDefaultAsync(s => s.Id == id);
-
-        if (submission == null)
-        {
-            return NotFound(new
-            {
-                message = "Submission not found."
-            });
-        }
-
-        // Teacher can only grade their own assignments
-        if (submission.Assignment.TeacherId != teacher.Id)
+        if (assignment.TeacherId != teacher.Id)
         {
             return Forbid();
         }
-
-        // Validate marks
-        if (request.Marks < 0 ||
-            request.Marks > submission.Assignment.MaximumMarks)
-        {
-            return BadRequest(new
-            {
-                message =
-                    $"Marks must be between 0 and {submission.Assignment.MaximumMarks}."
-            });
-        }
-
-        submission.Marks = request.Marks;
-        submission.Feedback = request.Feedback;
-        submission.Status = SubmissionStatus.Reviewed;
-
-        await _context.SaveChangesAsync();
-
-        return Ok(MapToResponse(submission));
     }
 
-    // =========================================================
-    // DELETE: api/submissions/{id}
-    // =========================================================
-    // Only Admin can delete submissions.
-    [HttpDelete("{id:int}")]
-    [Authorize(Roles = "Admin")]
-    public async Task<ActionResult> DeleteSubmission(int id)
+    var submissions = await query
+        .OrderByDescending(s => s.SubmittedAt)
+        .ToListAsync();
+
+    return Ok(
+        submissions.Select(MapToResponse)
+    );
+
+
+}
+
+// =========================================================
+// GRADE SUBMISSION
+// Teacher only
+// =========================================================
+
+[HttpPut("{id:int}/grade")]
+[Authorize(Roles = "Teacher")]
+public async Task<ActionResult<SubmissionResponseDto>>
+    GradeSubmission(
+        int id,
+        GradeSubmissionRequest request)
+{
+    var userId = GetCurrentUserId();
+
+    if (userId == null)
     {
-        var submission = await _context.Submissions
-            .FirstOrDefaultAsync(s => s.Id == id);
-
-        if (submission == null)
+        return Unauthorized(new
         {
-            return NotFound(new
-            {
-                message = "Submission not found."
-            });
-        }
-
-        _context.Submissions.Remove(submission);
-
-        await _context.SaveChangesAsync();
-
-        return NoContent();
+            message = "Invalid user identity."
+        });
     }
 
+    var teacher = await _context.Teachers
+        .FirstOrDefaultAsync(t => t.UserId == userId.Value);
+
+    if (teacher == null)
+    {
+        return NotFound(new
+        {
+            message = "Teacher profile not found."
+        });
+    }
+
+    var submission = await _context.Submissions
+        .Include(s => s.Assignment)
+        .Include(s => s.Student)
+            .ThenInclude(st => st.User)
+        .FirstOrDefaultAsync(s => s.Id == id);
+
+    if (submission == null)
+    {
+        return NotFound(new
+        {
+            message = "Submission not found."
+        });
+    }
+
+    // Teacher can only grade submissions
+    // belonging to their own assignment
+    if (submission.Assignment.TeacherId != teacher.Id)
+    {
+        return Forbid();
+    }
+
+    if (request.Marks < 0 ||
+        request.Marks > submission.Assignment.MaximumMarks)
+    {
+        return BadRequest(new
+        {
+            message =
+                $"Marks must be between 0 and {submission.Assignment.MaximumMarks}."
+        });
+    }
+
+    submission.Marks = request.Marks;
+    submission.Feedback = request.Feedback;
+    submission.Status = SubmissionStatus.Reviewed;
+
+    await _context.SaveChangesAsync();
+
+    return Ok(MapToResponse(submission));
+}
+
     // =========================================================
-    // Helper: Get logged-in User ID from JWT
+    // PRIVATE HELPERS
     // =========================================================
+
     private int? GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+{
+    var userIdClaim = User.FindFirstValue(
+        ClaimTypes.NameIdentifier);
 
-        if (string.IsNullOrEmpty(userIdClaim))
+    if (int.TryParse(userIdClaim, out int userId))
+    {
+        return userId;
+    }
+
+    return null;
+}
+
+    private string? ValidateFile(IFormFile file)
+    {
+        const long maxSize = 10 * 1024 * 1024;
+
+        if (file.Length == 0)
         {
-            userIdClaim = User.FindFirstValue(
-                System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub);
+            return "The uploaded file is empty.";
         }
 
-        if (int.TryParse(userIdClaim, out var userId))
+        if (file.Length > maxSize)
         {
-            return userId;
+            return "File size cannot exceed 10 MB.";
+        }
+
+        var allowedExtensions = new[]
+        {
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".txt",
+            ".zip"
+        };
+
+        var extension =
+            Path.GetExtension(file.FileName)
+                .ToLowerInvariant();
+
+        if (!allowedExtensions.Contains(extension))
+        {
+            return "Only PDF, DOC, DOCX, TXT and ZIP files are allowed.";
         }
 
         return null;
     }
 
-    // =========================================================
-    // Helper: Map entity to DTO
-    // =========================================================
+    private void DeletePhysicalFile(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+            return;
+
+        var relativePath = filePath
+            .TrimStart('/')
+            .Replace(
+                '/',
+                Path.DirectorySeparatorChar);
+
+        var physicalPath = Path.Combine(
+            _environment.WebRootPath,
+            relativePath);
+
+        if (System.IO.File.Exists(physicalPath))
+        {
+            System.IO.File.Delete(physicalPath);
+        }
+    }
+
     private static SubmissionResponseDto MapToResponse(
         Submission submission)
     {
         return new SubmissionResponseDto
         {
             Id = submission.Id,
-            Answer = submission.Answer,
-            SubmittedAt = submission.SubmittedAt,
-            Marks = submission.Marks,
-            Feedback = submission.Feedback,
-            Status = submission.Status,
-
             AssignmentId = submission.AssignmentId,
             AssignmentTitle = submission.Assignment.Title,
 
             StudentId = submission.StudentId,
-            StudentName = submission.Student.User.FullName
+            StudentName = submission.Student.User.FullName,
+
+            Answer = submission.Answer,
+            SubmittedAt = submission.SubmittedAt,
+
+            Marks = submission.Marks,
+            Feedback = submission.Feedback,
+            Status = submission.Status,
+
+            FileName = submission.FileName,
+            FileUrl = submission.FilePath,
+            FileContentType = submission.FileContentType,
+            FileSize = submission.FileSize
         };
     }
 }

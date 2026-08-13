@@ -6,6 +6,14 @@ public class SubmissionResponseDto
 {
     public int Id { get; set; }
 
+    public int AssignmentId { get; set; }
+
+    public string AssignmentTitle { get; set; } = string.Empty;
+
+    public int StudentId { get; set; }
+
+    public string StudentName { get; set; } = string.Empty;
+
     public string Answer { get; set; } = string.Empty;
 
     public DateTime SubmittedAt { get; set; }
@@ -16,11 +24,11 @@ public class SubmissionResponseDto
 
     public SubmissionStatus Status { get; set; }
 
-    public int AssignmentId { get; set; }
+    public string? FileName { get; set; }
 
-    public string AssignmentTitle { get; set; } = string.Empty;
+    public string? FileUrl { get; set; }
 
-    public int StudentId { get; set; }
+    public string? FileContentType { get; set; }
 
-    public string StudentName { get; set; } = string.Empty;
+    public long? FileSize { get; set; }
 }
