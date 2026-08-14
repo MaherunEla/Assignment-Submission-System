@@ -90,11 +90,14 @@ Requirements
 
 ## Make sure the following are installed:
 
+```
 .NET 10 SDK
 Node.js
 npm
 PostgreSQL
 Database Setup
+
+```
 
 Create a PostgreSQL database, for example:
 
@@ -110,6 +113,7 @@ The repository contains the migration files required to create the database sche
 
 Environment Configuration
 
+```
 Create the required environment files from the provided .env.example files.
 
 Do not commit real passwords, API keys, JWT secrets, or other sensitive information.
@@ -134,7 +138,7 @@ Run the API:
 
 dotnet run
 
-Swagger is available when running the application in the configured development environment.
+The backend API runs locally using ASP.NET Core.
 
 Running the Frontend
 
@@ -159,12 +163,17 @@ http://localhost:3000
 ### Demo Credentials
 
 ## Admin
+
 Email: admin@assignment.com
 Password: Admin@123
+
 ## Teacher
+
 Email: teacher@assignment.com
 Password: Teacher@123
+
 ## Student
+
 Email: student@assignment.com
 Password: Student@123
 
@@ -199,6 +208,8 @@ The application is primarily designed for local development and evaluation.
 Repository
 
 The complete source code for the frontend, backend, database migrations, and configuration examples is included in this repository.
+
+```
 
 ```
 
