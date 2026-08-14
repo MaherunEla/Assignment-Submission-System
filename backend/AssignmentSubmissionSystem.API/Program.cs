@@ -20,6 +20,17 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 // Controllers
 builder.Services.AddControllers();
 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Frontend", policy =>
+    {
+        policy
+            .WithOrigins("http://localhost:3000")
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
+
 // Password hashing
 builder.Services.AddScoped<
     Microsoft.AspNetCore.Identity.IPasswordHasher<User>,
@@ -63,6 +74,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
+
+
 // Authorization
 builder.Services.AddAuthorization();
 
@@ -90,6 +103,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseCors("Frontend");
 
 app.UseStaticFiles();
 
